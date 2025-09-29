@@ -1,0 +1,31 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dummy-app
+  namespace: app-${TARGET_ENV}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dummy-app
+      env: ${TARGET_ENV}
+  template:
+    metadata:
+      labels:
+        app: dummy-app
+        env: ${TARGET_ENV}
+    spec:
+      nodeSelector:
+        reserved: "no"
+      containers:
+      - name: dummy-app
+        image: ${IMAGE}
+        ports:
+        - containerPort: 8080
+        resources:
+          requests:
+            cpu: "50m"
+            memory: "64Mi"
+          limits:
+            cpu: "200m"
+            memory: "128Mi"
