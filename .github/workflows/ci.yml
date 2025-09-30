@@ -20,6 +20,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Verify Dockerfile exists
+        run: |
+          if [ ! -f Dockerfile ]; then
+            echo "❌ Dockerfile not found in root directory"
+            exit 1
+          fi
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v2
         with:
@@ -47,6 +54,7 @@ jobs:
         uses: docker/build-push-action@v4
         with:
           context: .
+          file: ./Dockerfile
           push: true
           platforms: linux/arm/v7,linux/arm64,linux/amd64
           tags: ghcr.io/arkinfotech24/dummy-app:${{ github.sha }}
@@ -57,4 +65,3 @@ jobs:
         run: |
           echo "Listing manifest for image:"
           docker run --rm mplatform/mquery:latest ghcr.io/arkinfotech24/dummy-app:${{ github.sha }}
-
