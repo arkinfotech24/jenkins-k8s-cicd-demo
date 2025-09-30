@@ -1,3 +1,4 @@
+
 name: CI Build and Deploy
 
 on:
@@ -35,7 +36,7 @@ permissions:
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
-    environment: ci
+    environment: ${{ github.event.inputs.TARGET_ENV }}
 
     steps:
       - name: Checkout
@@ -91,7 +92,7 @@ jobs:
         env:
           KUBECONFIG_DATA: ${{ secrets.KUBECONFIG_DATA }}
 
-      - name: Deploy to Kubernetes
+      - name: Deploy to Kubernetes (Helm)
         if: ${{ github.event.inputs.SKIP_DEPLOY != 'true' }}
         env:
           IMAGE: ghcr.io/arkinfotech24/dummy-app:${{ github.event.inputs.IMAGE_TAG || github.sha }}
@@ -100,9 +101,11 @@ jobs:
           export KUBECONFIG=$HOME/.kube/config
           echo "[INFO] Deploying to Kubernetes namespace: app-${TARGET_ENV}"
           kubectl apply -f k8s/namespaces.yaml
-          envsubst < k8s/app-deployment-template.yaml | kubectl apply -f -
-          envsubst < k8s/app-service-template.yaml | kubectl apply -f -
-          kubectl -n app-${TARGET_ENV} rollout status deployment/dummy-app --timeout=120s
+          helm upgrade --install dummy-app ./helm-chart \
+            --namespace app-${TARGET_ENV} \
+            --set image.tag=${IMAGE} \
+            --set env=${TARGET_ENV} \
+            --wait
 
       - name: Verify Deployment
         if: ${{ github.event.inputs.SKIP_DEPLOY != 'true' }}
@@ -115,7 +118,7 @@ jobs:
           kubectl -n app-${TARGET_ENV} get svc dummy-app
 
       - name: Rollback on Failure
-        if: failure()
+        if: ${{ failure() && github.event.inputs.SKIP_DEPLOY != 'true' }}
         env:
           TARGET_ENV: ${{ github.event.inputs.TARGET_ENV || 'dev' }}
         run: |
@@ -124,7 +127,7 @@ jobs:
           helm rollback dummy-app --namespace app-${TARGET_ENV}
 
       - name: Promote to Next Environment
-        if: ${{ github.event.inputs.TARGET_ENV == 'dev' }}
+        if: ${{ github.event.inputs.TARGET_ENV == 'dev' && github.event.inputs.SKIP_DEPLOY != 'true' }}
         run: |
           echo "✅ Promotion logic triggered: dev → test"
           gh workflow run ci.yml \
@@ -132,6 +135,8 @@ jobs:
             --ref master \
             -f TARGET_ENV=test \
             -f IMAGE_TAG=${{ github.event.inputs.IMAGE_TAG || github.sha }}
+
+
 
 
 # name: CI Build and Deploy
