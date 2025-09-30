@@ -16,6 +16,11 @@ on:
         description: 'Image tag to deploy'
         required: true
         default: 'latest'
+      SKIP_DEPLOY:
+        description: 'Skip Kubernetes deployment'
+        required: false
+        default: false
+        type: boolean
 
   push:
     branches: [ master ]
@@ -30,7 +35,7 @@ permissions:
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
-    environment: ${{ github.event.inputs.TARGET_ENV }}
+    environment: ci
 
     steps:
       - name: Checkout
@@ -78,6 +83,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Set up kubeconfig
+        if: ${{ github.event.inputs.SKIP_DEPLOY != 'true' }}
         run: |
           mkdir -p $HOME/.kube
           echo "${{ secrets.KUBECONFIG_DATA }}" | base64 -d > $HOME/.kube/config
@@ -85,7 +91,8 @@ jobs:
         env:
           KUBECONFIG_DATA: ${{ secrets.KUBECONFIG_DATA }}
 
-      - name: Deploy to Kubernetes (Helm)
+      - name: Deploy to Kubernetes
+        if: ${{ github.event.inputs.SKIP_DEPLOY != 'true' }}
         env:
           IMAGE: ghcr.io/arkinfotech24/dummy-app:${{ github.event.inputs.IMAGE_TAG || github.sha }}
           TARGET_ENV: ${{ github.event.inputs.TARGET_ENV || 'dev' }}
@@ -93,13 +100,12 @@ jobs:
           export KUBECONFIG=$HOME/.kube/config
           echo "[INFO] Deploying to Kubernetes namespace: app-${TARGET_ENV}"
           kubectl apply -f k8s/namespaces.yaml
-          helm upgrade --install dummy-app ./helm-chart \
-            --namespace app-${TARGET_ENV} \
-            --set image.tag=${IMAGE} \
-            --set env=${TARGET_ENV} \
-            --wait
+          envsubst < k8s/app-deployment-template.yaml | kubectl apply -f -
+          envsubst < k8s/app-service-template.yaml | kubectl apply -f -
+          kubectl -n app-${TARGET_ENV} rollout status deployment/dummy-app --timeout=120s
 
       - name: Verify Deployment
+        if: ${{ github.event.inputs.SKIP_DEPLOY != 'true' }}
         env:
           TARGET_ENV: ${{ github.event.inputs.TARGET_ENV || 'dev' }}
         run: |
