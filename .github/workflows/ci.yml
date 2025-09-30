@@ -1,109 +1,104 @@
-pipeline {
-  agent any
+name: CI Build and Deploy
 
-  parameters {
-    choice(
-      name: 'TARGET_ENV',
-      choices: ['dev', 'test', 'prod'],
-      description: 'Select environment to deploy'
-    )
-    string(
-      name: 'IMAGE_TAG',
-      defaultValue: 'latest',
-      description: 'Image tag to deploy'
-    )
-    booleanParam(
-      name: 'SKIP_DEPLOY',
-      defaultValue: false,
-      description: 'Skip Kubernetes deployment'
-    )
-  }
+on:
+  workflow_dispatch:
+    inputs:
+      TARGET_ENV:
+        description: 'Select environment to deploy'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - test
+          - prod
+      IMAGE_TAG:
+        description: 'Image tag to deploy'
+        required: true
+        default: 'latest'
+      SKIP_DEPLOY:
+        description: 'Skip Kubernetes deployment'
+        required: false
+        default: false
+        type: boolean
 
-  environment {
-    IMAGE = "ghcr.io/arkinfotech24/dummy-app:${params.IMAGE_TAG}"
-    KUBECONFIG_CRED = 'kubeconfig-file-cred'
-    REGISTRY_CRED = 'registry-cred'
-  }
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
 
-  stages {
+permissions:
+  contents: read
+  packages: write
+  id-token: write
 
-    stage('Checkout') {
-      steps {
-        echo "[INFO] Checking out source code..."
-        checkout scm
-      }
-    }
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment: ci
 
-    stage('Login to GHCR') {
-      steps {
-        echo "[INFO] Logging into GitHub Container Registry..."
-        withCredentials([usernamePassword(credentialsId: env.REGISTRY_CRED, usernameVariable: 'GHCR_USERNAME', passwordVariable: 'GHCR_TOKEN')]) {
-          sh 'echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USERNAME}" --password-stdin'
-        }
-      }
-    }
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-    stage('Build & Push Multi-Arch Image') {
-      steps {
-        echo "[INFO] Building and pushing multi-arch image..."
-        sh '''
+      - name: Verify Dockerfile exists
+        run: |
+          if [ ! -f Dockerfile ]; then
+            echo "❌ Dockerfile not found in root directory"
+            exit 1
+          fi
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v2
+        with:
+          platforms: linux/arm/v7,linux/arm64,linux/amd64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+        with:
+          driver: docker-container
+          install: true
+
+      - name: Create builder instance (ensure running)
+        run: |
           docker buildx inspect multi-builder >/dev/null 2>&1 || docker buildx create --name multi-builder --use
-          docker buildx build \
-            --builder multi-builder \
-            --platform linux/arm/v7,linux/arm64,linux/amd64 \
-            -t ${IMAGE} \
-            --push \
-            .
-        '''
-      }
-    }
+          docker buildx inspect --bootstrap
 
-    stage('Deploy to Kubernetes') {
-      when {
-        expression { return !params.SKIP_DEPLOY }
-      }
-      steps {
-        echo "[INFO] Deploying to Kubernetes namespace: app-${params.TARGET_ENV}"
-        withCredentials([file(credentialsId: env.KUBECONFIG_CRED, variable: 'KUBECONFIG_FILE')]) {
-          sh '''
-            export KUBECONFIG=${KUBECONFIG_FILE}
-            export IMAGE=${IMAGE}
-            export TARGET_ENV=${params.TARGET_ENV}
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-            kubectl apply -f k8s/namespaces.yaml
-            envsubst < k8s/app-deployment-template.yaml | kubectl apply -f -
-            envsubst < k8s/app-service-template.yaml | kubectl apply -f -
+      - name: Build and push multi-arch image
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          platforms: linux/arm/v7,linux/arm64,linux/amd64
+          tags: ghcr.io/arkinfotech24/dummy-app:${{ github.event.inputs.IMAGE_TAG || github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
-            echo "[INFO] Waiting for rollout to complete..."
-            kubectl -n app-${TARGET_ENV} rollout status deployment/dummy-app --timeout=120s
-          '''
-        }
-      }
-    }
+      - name: Deploy to Kubernetes
+        if: ${{ github.event.inputs.SKIP_DEPLOY != 'true' }}
+        env:
+          IMAGE: ghcr.io/arkinfotech24/dummy-app:${{ github.event.inputs.IMAGE_TAG || github.sha }}
+          TARGET_ENV: ${{ github.event.inputs.TARGET_ENV || 'dev' }}
+        run: |
+          echo "[INFO] Deploying to Kubernetes namespace: app-${TARGET_ENV}"
+          kubectl apply -f k8s/namespaces.yaml
+          envsubst < k8s/app-deployment-template.yaml | kubectl apply -f -
+          envsubst < k8s/app-service-template.yaml | kubectl apply -f -
+          kubectl -n app-${TARGET_ENV} rollout status deployment/dummy-app --timeout=120s
 
-    stage('Verify Deployment') {
-      when {
-        expression { return !params.SKIP_DEPLOY }
-      }
-      steps {
-        echo "[INFO] Verifying deployment in app-${params.TARGET_ENV}..."
-        withCredentials([file(credentialsId: env.KUBECONFIG_CRED, variable: 'KUBECONFIG_FILE')]) {
-          sh '''
-            export KUBECONFIG=${KUBECONFIG_FILE}
-            kubectl -n app-${TARGET_ENV} get pods -l app=dummy-app
-            kubectl -n app-${TARGET_ENV} get svc dummy-app
-          '''
-        }
-      }
-    }
-  }
-
-  post {
-    success {
-      echo "[SUCCESS] Pipeline completed successfully for ${params.TARGET_ENV} with image tag ${params.IMAGE_TAG}"
-    }
-    failure {
-      echo "[ERROR] Pipeline failed. Check logs for details."
-    }
-  }
-}
+      - name: Verify Deployment
+        if: ${{ github.event.inputs.SKIP_DEPLOY != 'true' }}
+        env:
+          TARGET_ENV: ${{ github.event.inputs.TARGET_ENV || 'dev' }}
+        run: |
+          echo "[INFO] Verifying deployment in app-${TARGET_ENV}..."
+          kubectl -n app-${TARGET_ENV} get pods -l app=dummy-app
+          kubectl -n app-${TARGET_ENV} get svc dummy-app
