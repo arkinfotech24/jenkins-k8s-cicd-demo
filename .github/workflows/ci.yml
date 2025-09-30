@@ -2,9 +2,21 @@ pipeline {
   agent any
 
   parameters {
-    choice(name: 'TARGET_ENV', choices: ['dev', 'test', 'prod'], description: 'Select environment to deploy')
-    string(name: 'IMAGE_TAG', defaultValue: 'latest', description: 'Image tag to deploy')
-    booleanParam(name: 'SKIP_DEPLOY', defaultValue: false, description: 'Skip Kubernetes deployment')
+    choice(
+      name: 'TARGET_ENV',
+      choices: ['dev', 'test', 'prod'],
+      description: 'Select environment to deploy'
+    )
+    string(
+      name: 'IMAGE_TAG',
+      defaultValue: 'latest',
+      description: 'Image tag to deploy'
+    )
+    booleanParam(
+      name: 'SKIP_DEPLOY',
+      defaultValue: false,
+      description: 'Skip Kubernetes deployment'
+    )
   }
 
   environment {
