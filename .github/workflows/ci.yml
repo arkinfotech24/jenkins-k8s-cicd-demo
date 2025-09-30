@@ -1,0 +1,40 @@
+name: CI Build and optional deploy
+
+on:
+  push:
+    branches: [ master ]
+  workflow_dispatch:
+    inputs:
+      target_env:
+        description: 'Target environment'
+        required: true
+        default: dev
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up QEMU
+      uses: docker/setup-qemu-action@v3
+    - name: Build and push multi-arch image
+      uses: docker/build-push-action@v4
+      with:
+        push: true
+        context: .
+        tags: ghcr.io/arkinfotech24/dummy-app:${{ github.sha }}
+        platforms: linux/arm/v7,linux/arm64,linux/amd64
+    - name: Optional deploy via SSH bastion
+      if: ${{ github.event.inputs.target_env == 'dev' }}
+      uses: appleboy/ssh-action@v0.1.7
+      with:
+        host: ${{ secrets.HOMELAB_BASTION_HOST }}
+        username: ${{ secrets.HOMELAB_USER }}
+        key: ${{ secrets.HOMELAB_SSH_KEY }}
+        script: |
+          export IMAGE=ghcr.io/arkinfotech24/dummy-app:${{ github.sha }}
+          export TARGET_ENV=${{ github.event.inputs.target_env }}
+          cd /home/${{ secrets.HOMELAB_USER }}/repo/jenkins-k8s-cicd-demo || exit 0
+          git pull || true
+          envsubst < k8s/app-deployment-template.yaml | kubectl apply -f -
+          envsubst < k8s/app-service-template.yaml | kubectl apply -f -
