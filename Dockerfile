@@ -10,7 +10,7 @@ RUN apt-get update && \
 
 # Optional: Install buildx plugin (if needed for multi-arch builds)
 RUN mkdir -p ~/.docker/cli-plugins && \
-    curl -sSL https://github.com/docker/buildx/releases/latest/download/buildx-linux-amd64 -o ~/.docker/cli-plugins/docker-buildx && \
+    curl -sSL https://github.com/docker/buildx/releases/latest/download/buildx-linux-arm64 -o ~/.docker/cli-plugins/docker-buildx && \
     chmod +x ~/.docker/cli-plugins/docker-buildx
 
 USER jenkins
