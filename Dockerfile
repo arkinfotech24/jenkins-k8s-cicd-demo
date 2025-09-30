@@ -1,5 +1,4 @@
 FROM eclipse-temurin:17-jdk
-<<<<<<< HEAD
 
 LABEL maintainer="Allen Efienokwu"
 LABEL purpose="Jenkins CI with Docker CLI and Buildx for ARM64"
